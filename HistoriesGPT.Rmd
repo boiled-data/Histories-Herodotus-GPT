@@ -1,0 +1,178 @@
+---
+title: 'Knowledge Retrieval and Task Automation: with GPT on Histories of Herodotus'
+date: "5 Dec 2023 "
+output: 
+  html_document:
+    code_folding: hide
+bibliography: biblio_hist_gpt.bib
+---
+
+```{r setup, include=TRUE, message=FALSE, warning=FALSE, cache=FALSE} 
+
+#Preliminaries:
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, eval = TRUE) 
+
+rm(list=ls())
+
+library(openai)
+library(htmltools)
+library(stringr)
+
+dir.create("Histories_GPT", showWarnings = FALSE)
+
+# 0 Generate helper function ---------------------------------------------------
+
+if (file.exists("Histories_GPT/gpt_out.RDS")) {
+  
+  gpt_out <- readRDS("Histories_GPT/gpt_out.RDS")
+  
+} else {
+  
+  gpt_out <- list()
+  today <- as.character(Sys.Date())
+  gpt_out[1] <- today
+  
+}
+
+
+```
+
+## Introduction 
+
+With the rise of generative AI, automatic text and image generation are becoming [increasingly popular](https://huggingface.co/). The creative capabilities of Large Language Models can be used in various domains such as knowledge extraction or task automation [eg. @yang2023harnessing; @kaddour2023challenges; @naveed2023comprehensive; @liu2023summary], and rapid developments in this area underscore the immense potential of these technologies. One trending topic in the current discussion is how to efficiently query the engines [eg. @zamfirescu2023johnny; @chen2023unleashing]. We contribute to this discourse by using R-code to interact with both *GPT-3.5* and *GPT-4* using the [OpenAI-API](https://platform.openai.com/) on the *science of historiography*. 
+
+We start by following up on a [previous essay](https://boiled-data.github.io/Histories.html) on text mining the book *Histories* by the Greek author *Herodotus* (484 – 425 BC) and summarize the content of his book using the powerful capabilities of OpenAI's *GPT3.5-turbo*. First, we let *GPT* summarize the text, setting the model's *temperature* parameter to zero, which minimizes the random component in the generated output.
+
+```{r label='gptx1'}
+# 1 Query on OpenAI-API: GPT3.5 ---------------------------------------------------
+# helper function to query the openai-api:
+get_completion <- function(prompt, model='gpt-3.5-turbo', temperature = 0) {
+  messages <- list(list('role'='user', 'content'=prompt))            
+  response <- create_chat_completion(model,
+                                      messages = messages ,
+                                      temperature = temperature,
+                                      openai_api_key = Sys.getenv("OPENAI_API_KEY"), #add your openai key to the environment variables
+                                      )
+  return(response$choices$message.content)
+  
+  }
+
+# 1 First example: Summarizes Herodotus
+
+prompt_1 <- 'Summarize the content of the book \'Histories\' by the author Herodotus. Provide the corresponding references.'
+
+if (length(gpt_out)<2) {
+ 
+  sum_histories <- get_completion(prompt_1)
+  
+  gpt_out[2] <- sum_histories
+  
+}
+
+HTML(paste("Prompt:<i>", prompt_1), "</i>", "<p></p>", "GPT3.5:<i>", str_replace_all(gpt_out[[2]], "\\\n", "<br>"), "</i>")
+
+
+```
+<br>
+The resulting text is well-written and looks plausible at first glance. The provided reference suggests that the summary is based on the original book. However, we should acknowledge that GPT was trained on a lot of data from many different resources and is not necessarily relying just on the *Histories* itself when answering our questions.
+
+## Adding GPT's Temperature
+
+In the next step, we would like to figure out specific topics of the book. What messages was Herodotus trying to tell his readers beyond the pure content of the book? When we ask GPT, let us consider some experiments on GPT's temperature parameter as well: To vary the randomness in the output we subsequently try out the configurations 0, 0.5, 1, and 1.5. Values beyond 1.5 resulted in pseudo-language, blending tokens from different languages.
+
+```{r label='gptx2'}
+# 2 Query on OpenAI GPT3.5: Introducing Temperature ---------------------------------------------------
+prompt_2 <- "What knowledge and lessons can today's societies and people learn from the book \"Histories\" of \"Herodotus\"? Provide your answer in a list using hyphen bullets."
+
+temp_vec <- seq(0, 1.5, 0.5) # set vector of temperature parameters
+
+messages_histories <- list()
+
+if (length(gpt_out)<3) {
+  
+  for (i in temp_vec) {
+      answer <- get_completion(prompt_2, temperature=i) # query depending on temperature
+      messages_histories <- c(messages_histories, list(c(i, answer))) # concat list + add used temperature
+    
+  }
+    
+  gpt_out[3] <- list(messages_histories) #concat list + add used temperature
+  
+}
+
+length_list <- length(gpt_out) #length of output
+answer_1 <- paste0('"', str_split(gpt_out[[3]][[1]][[2]], "-")[[1]][[2]], '"') # example
+
+HTML(paste("Prompt:<i>", prompt_2), "</i>", "<br>")
+
+```
+
+
+ ```r answer_1``` is one element from the resulting list of ```r length_list``` lists. We use these answers for further exploration.
+
+## Generative AI and Task Automation
+
+To facilitate a comparative analysis of GPT's responses, we reset the model's temperature to 0. Additionally, instead of using *GPT-3.5* we now upgrade to *gpt-4-1106-preview*, which allows us to get more support for highly complex language modeling tasks.
+
+```{r label='gptx3'}
+# 3 Query on OpenAI GPT4: Comparative Analysis ---------------------------------------------------
+# create helper function to extract and combine arguments from our list:
+gpt_get_element <- function(x) {
+
+    paste0('Temperature ', gpt_out[[3]][[x]][[1]], ': ', gpt_out[[3]][[x]][[2]])
+  
+}
+
+# extract list with answers from GPT:
+gpt_arguments <- lapply(seq(1:length(gpt_out[[3]])), gpt_get_element) |>
+                 paste(collapse=' ;; ') 
+
+
+# 3 Compare output of step 2 ------------------------------------------------------------------------------------
+
+# Combine query with input from above:
+prompt_3 <- "You are given a list \"X\" of \" ;; \"-separated and titled lists \"y\", each containing statements on topics of the book \"Histories\" of \"Herodotus\". The statements are labeled with hyphen bullets. 
+Do the following: 
+- Compare the  contextual similarity of these statements between the lists \"y\" to identify the total number of meanings.
+- Use your comparisons to sort the statements into one enumerated table \"Z\", such that the entries in the resulting rows have very similar meanings. The first column of table \"Z\" should contain ordered row numbers for each statement, from 1 to the total number of meanings in \"X\". Name the other columns by their corresponding name in \"y\". 
+- Only output table \"Z\". Output this table in HTML format.
+
+\"X\": " 
+
+
+if (length(gpt_out)<4) {
+ 
+   table_compare <- get_completion(paste(prompt_3, gpt_arguments), model = 'gpt-4-1106-preview') # do comparison
+   gpt_out[4] <- table_compare # append output list
+
+}
+
+saveRDS(gpt_out, 'Histories_GPT/gpt_out.RDS') # save data for future compilation
+
+
+HTML(paste("Prompt:<i>", prompt_3), "</i>", "<br>") # output prompt
+HTML(str_extract(as.character(gpt_out[4]), "(?s)<table>(.*?)</table>")) 
+
+```
+
+<br>
+A first exploration of the table shows that the mapping of the arguments from the different temperature configurations works pretty well. Although there is some variability between the lists, a lot of arguments show up more than once in the table. Generated by GPT-4, the summarized list contains the 22 distinct answers of GPT-3.5. These answers range from 'The significance of cultural diversity and tolerance' (4 times mentioned) to 'The impact of war and conflict on societies and individuals' (3 times) to 'The consequences of excessive pride and hubris' (2 times) and more. 
+
+## Summary
+
+Overall, we see that the interplay of R-Programming and the OpenAI-API can do a magnificent job of knowledge mining and generative text analysis. We also see that prompt engineering strategies such as providing *enough context* or formulating *specific expectations* are useful tactics when interacting with AI, as well as varying the temperature parameter, or switching the underlying model. 
+
+Are the suggested answers correct? Are important lessons missing from the above overview? To answer these questions, we need to have a look at the literature or the book ourselves. In general, such a semantic list will probably not be conclusive, since interpretations of the text are subjective, depending on the perspective of the reader.
+
+In essence, we have seen that [old texts](https://en.wikipedia.org/wiki/Lindy_effect) such as the 'Histories' can capture a lot of knowledge and wisdom that can be discovered by either reading – or by accessing them through generative AI. Our journey through the *Histories* has not only pointed towards a richer understanding of historical narratives but also emphasized a fruitful interplay between programming and machine intelligence. 
+
+Your perspectives enrich the discussion, turning it into a collaborative exploration of the past and the future. What are your thoughts on this?
+
+
+---
+nocite: |
+ @prompt2023eng, @openai2023wrap, @html2023tools, @stringr
+---
+
+
+## References
